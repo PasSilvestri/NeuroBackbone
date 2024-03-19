@@ -1,12 +1,53 @@
-
-
+__package__ = "backbone"
 class BackboneHook():
     """Generic class to represent hooks for a backbone trainer.
     """
-    def __init__(self, hook):
+    def __init__(self, hook: callable):
+        """
+        Initializes the hook with a function.
+
+        Parameters:
+            hook (callable): The function to be called when the hook is triggered.
+
+        Returns:
+            None
+        """
         self.__hook = hook
+        self.__trainer = None
+    def __attach__(self,trainer: 'BackboneTrainer'):
+        """
+        Called when the hook is attached to a trainer.
+
+        Parameters:
+            trainer (BackboneTrainer): The trainer this hook is attached to.
+
+        Returns:
+            None
+        """
+        self.__trainer = trainer
+    def __detach__(self):
+        """
+        Called when the hook is detached from a trainer.
+
+        Returns:
+            None
+        """
+        self.__trainer = None
     def __call__(self, *args, **kwargs):
+        """
+        Called when the hook is triggered, relays the call to the defined hook function.
+
+        Returns:
+            None
+        """
         return self.__hook(*args, **kwargs)
+    def trainer(self):
+        """
+        Return the trainer this hook is attached to, None otherwise.
+        Returns:
+            trainer (BackboneTrainer): The trainer.
+        """
+        return self.__trainer
     
 #region basic hooks
 class EpochStartHook(BackboneHook):
