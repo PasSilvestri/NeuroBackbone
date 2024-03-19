@@ -1,3 +1,4 @@
+__package__ = "backbone"
 import inspect
 import sys
 import os
@@ -17,26 +18,6 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from hooks import *
-
-def seed_everything(seed: int):
-    """
-    Set the random seed for reproducibility in Python, NumPy, and PyTorch.
-    
-    Parameters:
-    seed (int): The seed value to use for random number generation.
-    """
-    import random, os
-    import numpy as np
-    import torch
-    
-    
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
 
 class BackboneModule(nn.Module):
     """
@@ -261,12 +242,13 @@ class BackboneTrainer():
         self.evaluation_fn = evaluation_fn
         self.score_name = score_name
         
-        self.epoch_starts_hooks = [h for h in hooks if isinstance(h,EpochStartHook)]
-        self.process_samples_hooks = [h for h in hooks if isinstance(h,PreprocessSamplesHook)]
-        self.process_output_hooks = [h for h in hooks if isinstance(h,ProcessOutputHook)]
-        self.new_loss_hooks = [h for h in hooks if isinstance(h,NewLossHook)]
-        self.new_score_hooks = [h for h in hooks if isinstance(h,NewScoreHook)]
-        self.new_best_score_hooks = [h for h in hooks if isinstance(h,NewBestScoreHook)]
+        self.epoch_starts_hooks = []
+        self.process_samples_hooks = []
+        self.process_output_hooks = []
+        self.new_loss_hooks = []
+        self.new_score_hooks = []
+        self.new_best_score_hooks = []
+        for h in hooks: self.add_hook(h)
         
         self.epoch_loss_evolution = []
         self.valid_loss_evolution = []
@@ -275,13 +257,39 @@ class BackboneTrainer():
         
         self.stop_flag = False
     
-    def add_hook(self, hook):
+    def add_hook(self, hook: BackboneHook):
+        """
+        Adds a hook to the trainer hook list. Will be called based on the type of the hook
+
+        Parameters:
+            hook (BackboneHook): The hook to be added to the corresponding list.
+        """
+        if not isinstance(hook,BackboneHook) or type(hook) == BackboneHook:
+            raise NotImplementedError(f"Unknown hook type {type(hook)}. It must be a subclass of BackboneHook.")
+        
         if isinstance(hook,EpochStartHook): self.epoch_starts_hooks.append(hook)
-        if isinstance(hook,PreprocessSamplesHook): self.process_samples_hooks.append(hook)
-        if isinstance(hook,ProcessOutputHook): self.process_output_hooks.append(hook)
-        if isinstance(hook,NewLossHook): self.new_loss_hooks.append(hook)
-        if isinstance(hook,NewScoreHook): self.new_score_hooks.append(hook)
-        if isinstance(hook,NewBestScoreHook): self.new_best_score_hooks.append(hook)
+        elif isinstance(hook,PreprocessSamplesHook): self.process_samples_hooks.append(hook)
+        elif isinstance(hook,ProcessOutputHook): self.process_output_hooks.append(hook)
+        elif isinstance(hook,NewLossHook): self.new_loss_hooks.append(hook)
+        elif isinstance(hook,NewScoreHook): self.new_score_hooks.append(hook)
+        elif isinstance(hook,NewBestScoreHook): self.new_best_score_hooks.append(hook)
+        hook.__attach__(self)
+    
+    def remove_hook(self, hook: BackboneHook):
+        """
+        Removes the specified hook from the trainer hook list
+
+        Parameters:
+            hook (BackboneHook): The hook to be removed.
+        """
+        if hook in self.epoch_starts_hooks: self.epoch_starts_hooks.remove(hook)
+        elif hook in self.process_samples_hooks: self.process_samples_hooks.remove(hook)
+        elif hook in self.process_output_hooks: self.process_output_hooks.remove(hook)
+        elif hook in self.new_loss_hooks: self.new_loss_hooks.remove(hook)
+        elif hook in self.new_score_hooks: self.new_score_hooks.remove(hook)
+        elif hook in self.new_best_score_hooks: self.new_best_score_hooks.remove(hook)
+        hook.__detach__()
+        
         
 
     def train(self, train_dataset: torch.utils.data.Dataset, valid_dataset: torch.utils.data.Dataset,
@@ -394,7 +402,7 @@ class BackboneTrainer():
                 os.remove(os.path.join(path,"current_score.png"))
         return (self.epoch_loss_evolution, self.valid_loss_evolution, self.valid_score_evolution, self.best_score)
     
-    def evaluate(self, valid_dataset, batch_size = 32, collate_fn=None):
+    def evaluate(self, valid_dataset: torch.utils.data.Dataset, batch_size = 32, collate_fn=None):
         """
         Args:
             valid_dataset (Dataset): the dataset to use to evaluate the model.
@@ -434,8 +442,50 @@ class BackboneTrainer():
                     dataloader_bar.set_postfix({'loss': valid_loss/(batch_idx+1), f"{self.score_name}":valid_score/(batch_idx+1)})
         
         return valid_loss/len(dataloader), valid_score/len(dataloader)
+    
+    def test(self, test_dataset: torch.utils.data.Dataset, batch_size = 32, collate_fn=None):
+        loss_fn = self.loss_fn if self.loss_fn is not None else lambda y_hat,y: torch.zeros(1)
+        test_loss = 0.0
+        # test_dataset.to(self.model.device)
+        dataloader =  torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, collate_fn=collate_fn ) # num_workers=max(os.cpu_count()//2,1)
+        self.model.eval()
+        test_score = 0
+        with torch.no_grad():
+            with tqdm(dataloader,
+                      desc=f"Testing",
+                      bar_format="{desc}: |{bar}|{percentage:3.0f}% [{elapsed} ({remaining}), {rate_fmt}{postfix}]") as dataloader_bar:
+                for batch_idx, dataset_items in enumerate(dataloader_bar):
+                    if (type(dataset_items) is list or type(dataset_items) is tuple) and len(dataset_items) == 2:  
+                        samples, targets = dataset_items
+                    else:
+                        samples, targets = dataset_items, dataset_items
+
+                    for hook in self.process_samples_hooks: samples, targets = hook(samples,targets,stage="test")
+                    # Moving tensors to the same device of the model
+                    if isinstance(samples,torch.Tensor) and samples.device != self.model.device: samples = samples.to(self.model.device)
+                    if isinstance(targets,torch.Tensor) and targets.device != self.model.device: targets = targets.to(self.model.device)
+
+                    output = self.model(samples)
+                    for hook in self.process_output_hooks: output = hook(output, stage="test")
+
+                    loss = loss_fn(output, targets)
+
+                    test_loss += loss.item()
+                    test_score += self.evaluation_fn(output, targets).item()
+                    dataloader_bar.set_postfix({'loss': test_loss/(batch_idx+1), f"{self.score_name}":test_score/(batch_idx+1)})
+        
+        return test_loss/len(dataloader), test_score/len(dataloader)
+
 
     def save_evolution_graphs(self, path, filename1 = "loss.png", filename2 = "score.png"):
+        """
+        Save evolution graphs of loss and score to specified path with specified filenames.
+
+        Args:
+            path (str): The directory path where the graphs will be saved.
+            filename1 (str): The filename for the loss graph. Default is "loss.png".
+            filename2 (str): The filename for the score graph. Default is "score.png".
+        """
         plt.figure(figsize=(8,6),dpi=150)
         plt.plot(self.epoch_loss_evolution, label="train")
         plt.plot(self.valid_loss_evolution, label="val")
@@ -456,6 +506,12 @@ class BackboneTrainer():
 
     
     def save_curent_model_state(self, path):
+        """
+        Save the current model state and training evolution data to the specified path.
+
+        Args:
+            path (str): The path to save the model state.
+        """
         os.makedirs(path,exist_ok=True)
         self.model.save(path)
         with open(os.path.join(path,"evolution.json"), "w") as f:
@@ -472,6 +528,12 @@ class BackboneTrainer():
         self.save_evolution_graphs(path,"best_model_loss.png","best_model_score.png")
     
     def load_trainer_evolution(self,path):
+        """
+        Load the trainer evolution data from a JSON file located at the specified path.
+
+        Args:
+            path (str): The path to the directory containing the 'evolution.json' file.
+        """
         with open(os.path.join(path,"evolution.json"), "r") as f:
             evolution_data = json.load(f)
             self.epoch_loss_evolution = evolution_data["epoch_loss_evolution"]
@@ -487,22 +549,22 @@ class BackboneTrainer():
 
 #endregion
 
-def saved_model_sorted_list(path,score=None):
-    model_list = []
-    model_dirs = os.listdir(path)
-    for model_dir in model_dirs:
-        model_dir_path = os.path.join(path,model_dir)
-        with open(f"{model_dir_path}/evolution.json","r") as evol_f:
-            evol = json.load(evol_f)
-            best_score = evol.get("best_score",0)
-            score_name = evol.get("score_name",None)
-            if score == None or score_name == None or score==score_name:
-                model_list.append({
-                    "best_score": best_score,
-                    "name": model_dir
-                })
-    model_list = sorted(model_list, key=lambda x: x["best_score"], reverse=True)
-    return model_list
+# def saved_model_sorted_list(path,score=None):
+#     model_list = []
+#     model_dirs = os.listdir(path)
+#     for model_dir in model_dirs:
+#         model_dir_path = os.path.join(path,model_dir)
+#         with open(f"{model_dir_path}/evolution.json","r") as evol_f:
+#             evol = json.load(evol_f)
+#             best_score = evol.get("best_score",0)
+#             score_name = evol.get("score_name",None)
+#             if score == None or score_name == None or score==score_name:
+#                 model_list.append({
+#                     "best_score": best_score,
+#                     "name": model_dir
+#                 })
+#     model_list = sorted(model_list, key=lambda x: x["best_score"], reverse=True)
+#     return model_list
 
 
 
