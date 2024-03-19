@@ -274,6 +274,15 @@ class BackboneTrainer():
         self.best_score = 0
         
         self.stop_flag = False
+    
+    def add_hook(self, hook):
+        if isinstance(hook,EpochStartHook): self.epoch_starts_hooks.append(hook)
+        if isinstance(hook,PreprocessSamplesHook): self.process_samples_hooks.append(hook)
+        if isinstance(hook,ProcessOutputHook): self.process_output_hooks.append(hook)
+        if isinstance(hook,NewLossHook): self.new_loss_hooks.append(hook)
+        if isinstance(hook,NewScoreHook): self.new_score_hooks.append(hook)
+        if isinstance(hook,NewBestScoreHook): self.new_best_score_hooks.append(hook)
+        
 
     def train(self, train_dataset: torch.utils.data.Dataset, valid_dataset: torch.utils.data.Dataset,
               epochs: int = 1, epochs_done:int = 0, batch_size: int = 32, shuffle: bool = False,

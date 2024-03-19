@@ -186,7 +186,7 @@ class Lstm(BackboneModule):
         embs = self.lstm_dropout(embs)
         return embs
     
-class Classifier(torch.nn.Module):
+class Classifier(BackboneModule):
     def __init__(self, in_features:int, num_classes:int, num_layers:int = 2, **kwargs):
         super().__init__()
 
@@ -200,7 +200,7 @@ class Classifier(torch.nn.Module):
         out = self.sequential(x)
         return out
     
-class Classifier2(torch.nn.Module):
+class Classifier2(BackboneModule):
     def __init__(self, in_features:int, out_features:int, num_layers:int = 2, dropout:float = 0.4, **kwargs):
         super().__init__()
 
