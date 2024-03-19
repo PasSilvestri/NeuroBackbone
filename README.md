@@ -9,9 +9,10 @@ TODO: add to pip
 
 ### Usage
 ```python
-import torch
+
 import backbone as bkb
-#...
+import torch
+import ...
 
 SEED = 1749274
 bkb.seed_everything(SEED)
@@ -25,15 +26,15 @@ class Model(bkb.BackboneModule):
         return self.linear(input_vec)
     
     def loss_fn(self, output, target):
-        pass
+        ...
     def eval_fn(self, output, target):
-        pass
+        ...
 
 # Example usage
 dd = MyDataset("dataset.tsv")
 train_dataset, val_dataset = torch.utils.data.random_split(dd, [0.8,0.2])
 
-model = Model(**kwargs)
+model = Model(input_size = 128, output_classes = 2)
 model.to("cuda")
 
 optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
@@ -45,7 +46,7 @@ data_preprocessing_hook = PreprocessSamplesHook(hook = lambda samples, targets, 
 
 trainer = bkb.BackboneTrainer(model=model, optimizer=optimizer, loss_fn=loss_fn, evaluation_fn=score_fn, score_name=score_name, hooks=[data_preprocessing_hook])
 
-earlyStoppingHook = EarlyStoppingValidLossHook(trainer, patience=3, margin=0.001)
+earlyStoppingHook = EarlyStoppingValidLossHook(patience=3, margin=0.001)
 trainer.add_hook(earlyStoppingHook)
 
 trainer.train(
@@ -58,7 +59,8 @@ trainer.train(
     save_current_graphs=True
 )
 
-#...
+...
+
 loaded_model = Model.load("./checkpoints/Model_1710811967248")
 ```
 
