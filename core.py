@@ -6,6 +6,7 @@ import pickle
 import math
 import random
 from datetime import datetime
+from typing import List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,6 +16,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+from hooks import *
 
 def seed_everything(seed: int):
     """
@@ -242,7 +244,7 @@ class BackboneTrainer():
 
     def __init__(self, model: BackboneModule, optimizer, loss_fn,
                  evaluation_fn = lambda y_hat,y: torch.zeros(1), score_name = "Score",
-                 process_samples = None, process_output = None, **kwargs):
+                 hooks: List[BackboneHook] = [], **kwargs):
         """
         Args:
             model (BackboneModule): the model we want to train.
@@ -250,20 +252,28 @@ class BackboneTrainer():
             loss_fn (callable): function that computes the loss for the model. Inputs: (output, target). Output: Tensor value
             evaluation_fn (callable): function that computes the score for the model. Inputs: (output, target). Output: Tensor value
             score_name (str): name of the score used. E.g. "F1-score", "Accuracy", ...
-            process_samples (callable): function to process the samples and targets before feeding them to the model. Inputs: (samples, targets). Output: (samples, targets)
-            process_output (callable): function to process the output of the model. Inputs: (output). Output: (output)
+            hooks (List[BackboneHook], optional): list of hooks to apply to the model. Defaults to [].
         """
         self.model = model
         self.optimizer = optimizer
         self.loss_fn = loss_fn
+        
         self.evaluation_fn = evaluation_fn
         self.score_name = score_name
-        self.process_samples = process_samples
-        self.process_output = process_output
+        
+        self.epoch_starts_hooks = [h for h in hooks if isinstance(h,EpochStartHook)]
+        self.process_samples_hooks = [h for h in hooks if isinstance(h,PreprocessSamplesHook)]
+        self.process_output_hooks = [h for h in hooks if isinstance(h,ProcessOutputHook)]
+        self.new_loss_hooks = [h for h in hooks if isinstance(h,NewLossHook)]
+        self.new_score_hooks = [h for h in hooks if isinstance(h,NewScoreHook)]
+        self.new_best_score_hooks = [h for h in hooks if isinstance(h,NewBestScoreHook)]
+        
         self.epoch_loss_evolution = []
         self.valid_loss_evolution = []
         self.valid_score_evolution = []
         self.best_score = 0
+        
+        self.stop_flag = False
 
     def train(self, train_dataset: torch.utils.data.Dataset, valid_dataset: torch.utils.data.Dataset,
               epochs: int = 1, epochs_done:int = 0, batch_size: int = 32, shuffle: bool = False,
@@ -278,7 +288,7 @@ class BackboneTrainer():
             shuffle (bool, optional): wheter to shuffle or not the batches. Defaults to False.
             save_path (str, optional): The folder path to save the model to. Defaults to None.
             collate_fn (function, optional): the dataloader collate function. Defaults to None.
-            save_current_graphs (bool, optional): whether to save the current loss and score to a png file while training. They get deleted when the training is over
+            save_current_graphs (bool, optional): whether to save the current epoch loss and score to a png file while training to visualize the evolution. They get deleted when the training is over (best and final model graphs are still saved). Defaults to False.
 
         Returns:
             epoch_loss_evolution (list(float)): The training loss epoch per epoch
@@ -286,6 +296,8 @@ class BackboneTrainer():
             valid_score_evolution (list(float)): The score epoch per epoch
             best_score (float): The best score over all epochs
         """
+        self.stop_flag = False # First reset the stop flag 
+        
         epochs = max(1,int(epochs))
         batch_size = max(1,int(batch_size))
 
@@ -293,41 +305,39 @@ class BackboneTrainer():
         if save_path != None:
             path = f"{save_path}/{self.model.name()}/"
 
-        # If best score for a previously saved checkpoint is still better, don't save this one
-        old_best_score = self.best_score
-        if path != None and os.path.exists(path):
-            with open(os.path.join(path,"evolution.json"), "r") as f:
-                evolution_data = json.load(f)
-                old_best_score = evolution_data["best_score"]
-
-        # train_dataset.to(self.model.device)
-        # valid_dataset.to(self.model.device)
-
         dataloader =  torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=shuffle ) # num_workers = max(os.cpu_count()-2,1)
 
         for epoch in range(epochs_done, epochs):
+            if self.stop_flag: break # If the stop flag is set, we stop the training
 
             epoch_loss = 0.0
             self.model.train()
+            for hook in self.epoch_starts_hooks: hook(epoch=epoch,stage="train")
+            # if self.stop_flag: break # If the stop flag is set, we stop the training
 
             with tqdm(dataloader,
                       desc=f"Training epoch {epoch+1:0>3}/{epochs:0>3}",
                       bar_format="{desc}: |{bar}|{percentage:3.0f}% [{elapsed} ({remaining}), {rate_fmt}{postfix}]") as dataloader_bar:
                 for batch_idx, dataset_items in enumerate(dataloader_bar):
+                    if self.stop_flag: break # If the stop flag is set, we stop the training
+                    
                     if (type(dataset_items) is list or type(dataset_items) is tuple) and len(dataset_items) == 2:  
                         samples, targets = dataset_items
                     else:
                         samples, targets = dataset_items, dataset_items
 
+                    for hook in self.process_samples_hooks: samples, targets = hook(samples,targets,stage="train")                    
+                    # if self.stop_flag: break # If the stop flag is set, we stop the training
+                    
                     # Moving tensors to the same device of the model
                     if isinstance(samples,torch.Tensor) and samples.device != self.model.device: samples = samples.to(self.model.device)
                     if isinstance(targets,torch.Tensor) and targets.device != self.model.device: targets = targets.to(self.model.device)
 
                     self.optimizer.zero_grad()
-
-                    if self.process_samples != None: samples, targets = self.process_samples(samples,targets)
+                    
                     output = self.model(samples)
-                    if self.process_output != None: output = self.process_output(output)
+                    for hook in self.process_output_hooks: output = hook(output,stage="train")
+                    # if self.stop_flag: break # If the stop flag is set, we stop the training
 
                     loss = self.loss_fn(output, targets)
                     loss.backward()
@@ -335,32 +345,44 @@ class BackboneTrainer():
 
                     epoch_loss += loss.item()
                     dataloader_bar.set_postfix({'loss': epoch_loss/(batch_idx+1)})
+            if self.stop_flag: break # If the stop flag is set, we stop the training (this call is to mirror the batch for loop stop onto the epoch for loop)
 
             epoch_loss = epoch_loss/len(dataloader)
             self.epoch_loss_evolution.append(epoch_loss)
+            for hook in self.new_loss_hooks: hook(epoch_loss,stage="train")
+            if self.stop_flag: break # If the stop flag is set, we stop the training
 
             valid_loss, valid_score = self.evaluate(valid_dataset, batch_size=batch_size, collate_fn=collate_fn)
             self.valid_loss_evolution.append(valid_loss)
             self.valid_score_evolution.append(valid_score)
+            #TODO: Maybe move those hook calls to the evaluate function
+            for hook in self.new_loss_hooks: hook(valid_loss,stage="valid")
+            # if self.stop_flag: break # If the stop flag is set, we stop the training
+            for hook in self.new_score_hooks: hook(self.score_name,valid_score,stage="valid")
+            # if self.stop_flag: break # If the stop flag is set, we stop the training
 
             # TODO: add lr scheduler support
 
-            print(f"Epoch: {epoch+1}/{epochs} | Training loss: {epoch_loss:.8f} | Validation loss: {valid_loss:.8f} | {self.score_name}: {valid_score:.8f}\n", flush=True)            
-
-            if valid_score > self.best_score and valid_score > old_best_score:
+            print(f"Epoch: {epoch+1}/{epochs} | Training loss: {epoch_loss:.8f} | Validation loss: {valid_loss:.8f} | {self.score_name}: {valid_score:.8f}\n", flush=True)
+    
+            if path != None and save_current_graphs:
+                self.save_evolution_graphs(path,"current_loss.png","current_score.png")
+                
+            if valid_score > self.best_score:
                 self.best_score = valid_score
                 if path != None:
                     self.save_curent_model_state(path)
-                    
-            if path != None and save_current_graphs:
-                self.save_evolution_graphs(path,"current_loss.png","current_score.png")
+                for hook in self.new_best_score_hooks: hook(self.score_name,valid_score,stage="train")
+                # if self.stop_flag: break # If the stop flag is set, we stop the training
+                
+            if self.stop_flag: break # If the stop flag is set, we stop the training
 
         print(f"Best score: {self.best_score:.4f}")
         if path != None:
             self.save_evolution_graphs(path,"final_loss.png","final_score.png")
             if save_current_graphs: 
-                os.remove (os.path.join(path,"current_loss.png"))
-                os.remove (os.path.join(path,"current_score.png"))
+                os.remove(os.path.join(path,"current_loss.png"))
+                os.remove(os.path.join(path,"current_score.png"))
         return (self.epoch_loss_evolution, self.valid_loss_evolution, self.valid_score_evolution, self.best_score)
     
     def evaluate(self, valid_dataset, batch_size = 32, collate_fn=None):
@@ -388,13 +410,13 @@ class BackboneTrainer():
                     else:
                         samples, targets = dataset_items, dataset_items
 
+                    for hook in self.process_samples_hooks: samples, targets = hook(samples,targets,stage="valid")
                     # Moving tensors to the same device of the model
                     if isinstance(samples,torch.Tensor) and samples.device != self.model.device: samples = samples.to(self.model.device)
                     if isinstance(targets,torch.Tensor) and targets.device != self.model.device: targets = targets.to(self.model.device)
 
-                    if self.process_samples != None: samples, targets = self.process_samples(samples,targets)
                     output = self.model(samples)
-                    if self.process_output != None: output = self.process_output(output)
+                    for hook in self.process_output_hooks: output = hook(output, stage="valid")
 
                     loss = self.loss_fn(output, targets)
 
@@ -425,8 +447,6 @@ class BackboneTrainer():
 
     
     def save_curent_model_state(self, path):
-        # if os.path.exists(path):
-        #     pass
         os.makedirs(path,exist_ok=True)
         self.model.save(path)
         with open(os.path.join(path,"evolution.json"), "w") as f:
@@ -449,6 +469,12 @@ class BackboneTrainer():
             self.valid_loss_evolution = evolution_data["valid_loss_evolution"]
             self.valid_score_evolution = evolution_data["valid_score_evolution"]
             self.best_score = evolution_data["best_score"]
+    
+    def stop_training(self):
+        """
+        Stop the training process. The trainer checks if the training should be stopped at the begging and at the end of each epoch, at the beginning each batch and right after computing the epoch loss (the epoch loss hooks get called).
+        """
+        self.stop_flag = True
 
 #endregion
 
