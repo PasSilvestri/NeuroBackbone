@@ -1,6 +1,4 @@
-__package__ = "backbone"
-from core import *
-from hooks import *
+from .hooks import *
 
 #region advanced hooks
 class EarlyStoppingValidLossHook(NewValidLossHook):

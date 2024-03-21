@@ -1,6 +1,7 @@
-# Backbone
+# NeuroBackbone
 
-A easy to use library to speed up development using pytorch. It's not meant for production
+NeuroBackbone is a lightweight, flexible Python framework based on Pytorch, for building and training neural networks. It is made to speed up development and offers an easy-to-use implementation of basic ML functionalities like training, testing or saving networks. Built around pytorch, with as few dependencies as possible, is meant for students and hobbyists who don't need all the complex functionalities offered by frameworks like pytorch-lightning, and want to go straight to the point.   
+<!-- A easy to use library to speed up development using pytorch. It's not meant for production -->
 
 ### Installation
 
@@ -10,7 +11,7 @@ TODO: add to pip
 ### Usage
 ```python
 
-import backbone as bkb
+import neurobackbone as bkb
 import torch
 import ...
 

@@ -1,4 +1,4 @@
-__package__ = "backbone"
+
 class BackboneHook():
     """Generic class to represent hooks for a backbone trainer.
     """
