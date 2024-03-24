@@ -77,4 +77,4 @@ loaded_model = Model.load("./checkpoints/Model_1710811967248")
 For detailed documentation, refer to the docstrings within the code.
 
 ### License
-This package is yet to be released under any licenses
+GNU General Public License v3 (GPLv3)
