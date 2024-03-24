@@ -19,26 +19,27 @@ import matplotlib.pyplot as plt
 from . import BackboneModule
 from neurobackbone.hooks import *
 from neurobackbone.functions import *
+import neurobackbone.utils as bkb_utils
 
 class BackboneTrainer():
     """Utility class to train and evaluate a model. Each Backbone Trainer instance is uniquly associated with a Backbone model."""
 
-    def __init__(self, model: BackboneModule, optimizer, loss_fn: BackboneFunction, evaluation_fn: BackboneFunction,
+    def __init__(self, model: BackboneModule, optimizer, loss_fn: BackboneFunction, evaluation_fns: List(BackboneFunction), main_metric_name: str = None,
                  hooks: List[BackboneHook] = [], **kwargs):
         """
         Args:
             model (BackboneModule): the model we want to train.
             optimizer (torch.optim): the optimizer used to minimize the sum of the loss functions.
-            loss_fn (callable): function that computes the loss for the model. Inputs: (output, target). Output: Tensor value
-            evaluation_fn (callable): function that computes the score for the model. Inputs: (output, target). Output: Tensor value
-            score_name (str): name of the score used. E.g. "F1-score", "Accuracy", ...
+            loss_fn (BackboneFunction): the loss function used to train the model.
+            evaluation_fns (List[BackboneFunction]): the evaluation functions used to evaluate the model. The first score is used as metric to evaluate the best model.
+            main_metric_name (str, optional): the name of the main metric. Defaults to the first evaluation function.
             hooks (List[BackboneHook], optional): list of hooks to apply to the model. Defaults to [].
         """
         self.model = model
         self.optimizer = optimizer
         self.loss_fn = loss_fn
         
-        self.evaluation_fn = evaluation_fn
+        self.evaluation_fns = evaluation_fns if isinstance(evaluation_fns,list) else [evaluation_fns]
         
         self.epoch_starts_hooks = []
         self.process_samples_hooks = []
@@ -50,8 +51,9 @@ class BackboneTrainer():
         
         self.epoch_loss_evolution = []
         self.valid_loss_evolution = []
-        self.valid_score_evolution = []
-        self.best_score = 0
+        self.valid_scores_evolution = {ef.name:[] for ef in self.evaluation_fns}
+        self.main_metric = main_metric_name if main_metric_name != None else self.evaluation_fns[0].name
+        self.best_scores = {ef.name:0 for ef in self.evaluation_fns}
         
         self.stop_flag = False
     
@@ -108,8 +110,8 @@ class BackboneTrainer():
         Returns:
             epoch_loss_evolution (list(float)): The training loss epoch per epoch
             valid_loss_evolution (list(float)): The validation loss epoch per epoch
-            valid_score_evolution (list(float)): The score epoch per epoch
-            best_score (float): The best score over all epochs
+            valid_scores_evolution (dict(list(float))): The scores epoch per epoch organized in a dict with the name of the evaluation function as key
+            best_scores (dict(float)): The best scores over all epochs organized in a dict with the name of the evaluation function as key
         """
         self.stop_flag = False # First reset the stop flag 
         
@@ -167,54 +169,58 @@ class BackboneTrainer():
             for hook in self.new_loss_hooks: hook(epoch_loss,stage="train")
             if self.stop_flag: break # If the stop flag is set, we stop the training
 
-            valid_loss, valid_score = self.evaluate(valid_dataset, batch_size=batch_size, collate_fn=collate_fn)
-            self.valid_loss_evolution.append(valid_loss)
-            self.valid_score_evolution.append(valid_score)
             #TODO: Maybe move those hook calls to the evaluate function
+            valid_loss, valid_scores = self.evaluate(valid_dataset, batch_size=batch_size, collate_fn=collate_fn)
+            self.valid_loss_evolution.append(valid_loss)
             for hook in self.new_loss_hooks: hook(valid_loss,stage="valid")
-            # if self.stop_flag: break # If the stop flag is set, we stop the training
-            for hook in self.new_score_hooks: hook(self.evaluation_fn.name,valid_score,stage="valid")
-            # if self.stop_flag: break # If the stop flag is set, we stop the training
+            
+            for score_name, score_value in valid_scores.items():
+                self.valid_scores_evolution[score_name].append(score_value)
+                for hook in self.new_score_hooks: hook(score_name,score_value,stage="valid")
+                if score_value > self.best_scores[score_name]: 
+                    self.best_scores[score_name] = score_value
+                    for hook in self.new_best_score_hooks: hook(score_name,score_value,stage="valid")
+                    if score_name == self.main_metric and path != None:
+                        self.save_curent_model_state(path)
 
             # TODO: add lr scheduler support
 
-            print(f"Epoch: {epoch+1}/{epochs} | Training loss: {epoch_loss:.8f} | Validation loss: {valid_loss:.8f} | {self.evaluation_fn.name}: {valid_score:.8f}\n", flush=True)
+            print(f"Epoch: {epoch+1}/{epochs} | Training loss: {epoch_loss:.8f} | Validation loss: {valid_loss:.8f}\n", flush=True)
+            if len(self.evaluation_fns) > 1:
+                for score_name, score_value in valid_scores.items():
+                    print(f"\t| {score_name}: {score_value:.8f}\n", flush=True)
     
             if path != None and save_current_graphs:
-                self.save_evolution_graphs(path,"current_loss.png","current_score.png")
-                
-            if valid_score > self.best_score:
-                self.best_score = valid_score
-                if path != None:
-                    self.save_curent_model_state(path)
-                for hook in self.new_best_score_hooks: hook(self.evaluation_fn.name,valid_score,stage="train")
-                # if self.stop_flag: break # If the stop flag is set, we stop the training
-                
+                bkb_utils.save_losses_graph(path, self.epoch_loss_evolution, self.valid_loss_evolution, filename="current_loss")
+                for score_name, score_evolution in self.valid_scores_evolution.items(): bkb_utils.save_score_graph(path,score_evolution,score_name,f"current_{score_name}")
             if self.stop_flag: break # If the stop flag is set, we stop the training
 
-        print(f"Best score: {self.best_score:.4f}")
+        print(f"Best score ({self.main_metric}): {self.best_scores[self.main_metric]:.4f}")
         if path != None:
-            self.save_evolution_graphs(path,"final_loss.png","final_score.png")
+            bkb_utils.save_losses_graph(path, self.epoch_loss_evolution, self.valid_loss_evolution, filename="final_loss")
+            for score_name, score_evolution in self.valid_scores_evolution.items(): bkb_utils.save_score_graph(path,score_evolution,score_name,f"final_{score_name}")
             if save_current_graphs: 
                 os.remove(os.path.join(path,"current_loss.png"))
-                os.remove(os.path.join(path,"current_score.png"))
-        return (self.epoch_loss_evolution, self.valid_loss_evolution, self.valid_score_evolution, self.best_score)
+                for score_name, score_evolution in self.valid_scores_evolution.items(): os.remove(os.path.join(path,f"current_{score_name}.png"))
+        return (self.epoch_loss_evolution, self.valid_loss_evolution, self.valid_scores_evolution, self.best_scores)
     
-    def evaluate(self, valid_dataset: torch.utils.data.Dataset, batch_size = 32, collate_fn=None):
+    def evaluate(self, dataset: torch.utils.data.Dataset, batch_size = 32, collate_fn=None, stage="valid"):
         """
         Args:
             valid_dataset (Dataset): the dataset to use to evaluate the model.
-            collate_fn (function, optional): the dataloader collate function. Defaults to None.
             batch_size (int, optional): the size of a single batch. Defaults to 32.
+            collate_fn (function, optional): the dataloader collate function. Defaults to None.
+            stage (str, optional): the stage of the evaluation. Defaults to "valid". Possible values are "valid" and "test".
         Returns:
-            final_valid_loss (list(float)): the average validation loss over valid_dataset.
-            score (float): the score computed over the validation dataset.
+            final_loss (float): the average loss over valid_dataset.
+            scores (list(float)): the list of scores computed over the dataset.
         """
-        valid_loss = 0.0
+        loss_fn = self.loss_fn if self.loss_fn is not None else lambda y_hat,y: torch.zeros(1)
+        total_loss = 0.0
         # valid_dataset.to(self.model.device)
-        dataloader =  torch.utils.data.DataLoader(valid_dataset, batch_size=batch_size, collate_fn=collate_fn ) # num_workers=max(os.cpu_count()//2,1)
+        dataloader =  torch.utils.data.DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn ) # num_workers=max(os.cpu_count()//2,1)
         self.model.eval()
-        valid_score = 0
+        valid_scores = {ef.name:0.0 for ef in self.evaluation_fns}
         with torch.no_grad():
             with tqdm(dataloader,
                       desc=f"Evaluating",
@@ -225,83 +231,27 @@ class BackboneTrainer():
                     else:
                         samples, targets = dataset_items, dataset_items
 
-                    for hook in self.process_samples_hooks: samples, targets = hook(samples,targets,stage="valid")
+                    for hook in self.process_samples_hooks: samples, targets = hook(samples,targets,stage=stage)
                     # Moving tensors to the same device of the model
                     if isinstance(samples,torch.Tensor) and samples.device != self.model.device: samples = samples.to(self.model.device)
                     if isinstance(targets,torch.Tensor) and targets.device != self.model.device: targets = targets.to(self.model.device)
 
                     output = self.model(samples)
-                    for hook in self.process_output_hooks: output = hook(output, stage="valid")
-
-                    loss = self.loss_fn(output, targets)
-
-                    valid_loss += loss.item()
-                    valid_score += self.evaluation_fn(output, targets).item()
-                    dataloader_bar.set_postfix({'loss': valid_loss/(batch_idx+1), f"{self.evaluation_fn.name}":valid_score/(batch_idx+1)})
-        
-        return valid_loss/len(dataloader), valid_score/len(dataloader)
-    
-    def test(self, test_dataset: torch.utils.data.Dataset, batch_size = 32, collate_fn=None):
-        loss_fn = self.loss_fn if self.loss_fn is not None else lambda y_hat,y: torch.zeros(1)
-        test_loss = 0.0
-        # test_dataset.to(self.model.device)
-        dataloader =  torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, collate_fn=collate_fn ) # num_workers=max(os.cpu_count()//2,1)
-        self.model.eval()
-        test_score = 0
-        with torch.no_grad():
-            with tqdm(dataloader,
-                      desc=f"Testing",
-                      bar_format="{desc}: |{bar}|{percentage:3.0f}% [{elapsed} ({remaining}), {rate_fmt}{postfix}]") as dataloader_bar:
-                for batch_idx, dataset_items in enumerate(dataloader_bar):
-                    if (type(dataset_items) is list or type(dataset_items) is tuple) and len(dataset_items) == 2:  
-                        samples, targets = dataset_items
-                    else:
-                        samples, targets = dataset_items, dataset_items
-
-                    for hook in self.process_samples_hooks: samples, targets = hook(samples,targets,stage="test")
-                    # Moving tensors to the same device of the model
-                    if isinstance(samples,torch.Tensor) and samples.device != self.model.device: samples = samples.to(self.model.device)
-                    if isinstance(targets,torch.Tensor) and targets.device != self.model.device: targets = targets.to(self.model.device)
-
-                    output = self.model(samples)
-                    for hook in self.process_output_hooks: output = hook(output, stage="test")
+                    for hook in self.process_output_hooks: output = hook(output, stage=stage)
 
                     loss = loss_fn(output, targets)
 
-                    test_loss += loss.item()
-                    test_score += self.evaluation_fn(output, targets).item()
-                    dataloader_bar.set_postfix({'loss': test_loss/(batch_idx+1), f"{self.evaluation_fn.name}":test_score/(batch_idx+1)})
+                    total_loss += loss.item()
+                    postfix_dict = {"loss":total_loss/(batch_idx+1)}
+                    for evaluation_fn in self.evaluation_fns:
+                        valid_scores[evaluation_fn.name] += evaluation_fn(output, targets).item()
+                        postfix_dict[evaluation_fn.name] = valid_scores[evaluation_fn.name]/(batch_idx+1)
+                    dataloader_bar.set_postfix(postfix_dict)
         
-        return test_loss/len(dataloader), test_score/len(dataloader)
-
-
-    def save_evolution_graphs(self, path, filename1 = "loss.png", filename2 = "score.png"):
-        """
-        Save evolution graphs of loss and score to specified path with specified filenames.
-
-        Args:
-            path (str): The directory path where the graphs will be saved.
-            filename1 (str): The filename for the loss graph. Default is "loss.png".
-            filename2 (str): The filename for the score graph. Default is "score.png".
-        """
-        plt.figure(figsize=(8,6),dpi=150)
-        plt.plot(self.epoch_loss_evolution, label="train")
-        plt.plot(self.valid_loss_evolution, label="val")
-        plt.ylabel("loss")
-        plt.xticks(range(1,len(self.epoch_loss_evolution)+1, math.ceil(len(self.epoch_loss_evolution)/25)))
-        plt.xlabel("epochs")
-        plt.legend(loc="upper right")
-        plt.savefig(os.path.join(path,filename1))
-        plt.close()
-
-        plt.figure(figsize=(8,6),dpi=150)
-        plt.plot(self.valid_score_evolution)
-        plt.ylabel(f"{self.evaluation_fn.name}")
-        plt.xlabel("epochs")
-        plt.xticks(range(1,len(self.valid_score_evolution)+1, math.ceil(len(self.valid_score_evolution)/25)))
-        plt.savefig(os.path.join(path,filename2))
-        plt.close()
-
+        return total_loss/len(dataloader), {score_name: score_value/len(dataloader) for score_name, score_value in valid_scores.items()}
+    
+    def test(self, test_dataset: torch.utils.data.Dataset, batch_size = 32, collate_fn=None):
+        return self.evaluate(test_dataset, batch_size=batch_size, collate_fn=collate_fn, stage="test")
     
     def save_curent_model_state(self, path):
         """
@@ -316,14 +266,15 @@ class BackboneTrainer():
             evolution_data = {
                 "epoch_loss_evolution": self.epoch_loss_evolution,
                 "valid_loss_evolution": self.valid_loss_evolution,
-                "valid_score_evolution": self.valid_score_evolution,
-                "best_score": self.best_score,
-                "score_name": self.evaluation_fn.name,
+                "valid_scores_evolution": self.valid_scores_evolution,
+                "best_scores": self.best_scores,
+                "main_metric": self.main_metric,
                 "saving_time": datetime.fromtimestamp(datetime.now().timestamp()).strftime("%d-%m-%Y %H:%M:%S") 
             }
             json.dump(evolution_data,f,indent="\t")
         # Plotting and saving the loss evolution graph and the score evolution graph
-        self.save_evolution_graphs(path,"best_model_loss.png","best_model_score.png")
+        bkb_utils.save_losses_graph(path, self.epoch_loss_evolution, self.valid_loss_evolution, filename="best_model_loss")
+        for score_name, score_evolution in self.valid_scores_evolution.items(): bkb_utils.save_score_graph(path,score_evolution,score_name,f"best_model_{score_name}")
     
     def load_trainer_evolution(self,path):
         """
@@ -336,8 +287,8 @@ class BackboneTrainer():
             evolution_data = json.load(f)
             self.epoch_loss_evolution = evolution_data["epoch_loss_evolution"]
             self.valid_loss_evolution = evolution_data["valid_loss_evolution"]
-            self.valid_score_evolution = evolution_data["valid_score_evolution"]
-            self.best_score = evolution_data["best_score"]
+            self.valid_scores_evolution = evolution_data["valid_scores_evolution"]
+            self.best_scores = evolution_data["best_scores"]
     
     def stop_training(self):
         """
