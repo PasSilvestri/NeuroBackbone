@@ -13,6 +13,7 @@ TODO: add to pip
 
 import neurobackbone as bkb
 import torch
+import torchmetrics
 import ...
 
 SEED = 1749274
@@ -21,15 +22,17 @@ bkb.seed_everything(SEED)
 class Model(bkb.BackboneModule):
     def __init__(self, input_size, output_classes, **kwargs):
         super().__init__()
+        self.input_size = input_size
+        self.output_classes = output_classes
         self.linear = torch.nn.Linear(input_size,output_classes)
 
     def forward(self, input_vec) -> torch.Tensor:
         return self.linear(input_vec)
     
     def loss_fn(self, output, target):
-        ...
+        return bkb.functions.BackboneFunction("Cross-entropy",torch.nn.functional.cross_entropy)
     def eval_fn(self, output, target):
-        ...
+        return bkb.functions.BackboneFunction("Accuracy",torchmetrics.Accuracy(num_classes=self.output_classes))
 
 # Example usage
 dd = MyDataset("dataset.tsv")
@@ -39,13 +42,12 @@ model = Model(input_size = 128, output_classes = 2)
 model.to("cuda")
 
 optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
-loss_fn = model.loss_fn
-score_name = "Accuracy"
-score_fn = model.eval_fn
+loss_fn = model.loss_fn()
+score_fn = model.eval_fn()
 
 data_preprocessing_hook = PreprocessSamplesHook(hook = lambda samples, targets, stage: (samples*2, targets))
 
-trainer = bkb.BackboneTrainer(model=model, optimizer=optimizer, loss_fn=loss_fn, evaluation_fn=score_fn, score_name=score_name, hooks=[data_preprocessing_hook])
+trainer = bkb.BackboneTrainer(model=model, optimizer=optimizer, loss_fn=loss_fn, evaluation_fn=score_fn, hooks=[data_preprocessing_hook])
 
 earlyStoppingHook = EarlyStoppingValidLossHook(patience=3, margin=0.001)
 trainer.add_hook(earlyStoppingHook)
