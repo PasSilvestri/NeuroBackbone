@@ -1,5 +1,6 @@
 import os, math
 from typing import List
+import matplotlib
 import matplotlib.pyplot as plt
 
 def seed_everything(seed: int = 1749274):
@@ -22,7 +23,7 @@ def seed_everything(seed: int = 1749274):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = True
 
-def save_losses_graph(path: str, train_loss_evolution: List(float), valid_loss_evolution: List(float) = None, filename: str ="loss"):
+def save_losses_graph(path: str, train_loss_evolution: List[float], valid_loss_evolution: List[float] = None, filename: str ="loss"):
     """
     Save a graph showing the evolution of training and validation losses over epochs.
 
@@ -32,17 +33,22 @@ def save_losses_graph(path: str, train_loss_evolution: List(float), valid_loss_e
         valid_loss_evolution (list): List of validation losses over epochs.
         filename (str, optional): The name of the file to save the graph as. Default is "loss". Don't add the file extension.
     """
+    # Set the backend to non-interactive mode
+    matplotlib.use("Agg")
+    
     plt.figure(figsize=(8,6),dpi=150)
     plt.plot(train_loss_evolution, label="train")
     if valid_loss_evolution is not None: plt.plot(valid_loss_evolution, label="val")
     plt.ylabel("loss")
-    plt.xticks(range(1,len(train_loss_evolution)+1, math.ceil(len(valid_loss_evolution)/25)))
+    #TODO: fix x labels not starting from 1 as they should
+    ticks = range(1,len(train_loss_evolution)+1, math.ceil(len(train_loss_evolution)/25))
+    plt.xticks(ticks=ticks,labels=ticks)
     plt.xlabel("epochs")
     plt.legend(loc="upper right")
     plt.savefig(os.path.join(path,filename+".png"))
     plt.close()
 
-def save_score_graph(path: str,  score_evolution: List(float), score_name: str = "score", filename: str ="score"):
+def save_score_graph(path: str,  score_evolution: List[float], score_name: str = "score", filename: str ="score"):
     """
     Save a graph showing the evolution of validation scores over epochs.
 
@@ -52,11 +58,16 @@ def save_score_graph(path: str,  score_evolution: List(float), score_name: str =
         score_name (str, optional): The name of the score. Default is "score".
         filename (str, optional): The name of the file to save the graph as. Default is "score". Don't add the file extension.
     """
+    # Set the backend to non-interactive mode
+    matplotlib.use("Agg")
+    
     plt.figure(figsize=(8,6),dpi=150)
     plt.plot(score_evolution)
     plt.ylabel(f"{score_name}")
     plt.xlabel("epochs")
-    plt.xticks(range(1,len(score_evolution)+1, math.ceil(len(score_evolution)/25)))
+    #TODO: fix x labels not starting from 1 as they should
+    ticks = range(1,len(score_evolution)+1, math.ceil(len(score_evolution)/25))
+    plt.xticks(ticks=ticks,labels=ticks)
     plt.savefig(os.path.join(path,filename+".png"))
     plt.close()
     

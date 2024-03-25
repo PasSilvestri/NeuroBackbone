@@ -61,7 +61,7 @@ class BackboneModule(nn.Module):
         """
         return f"{self.__class__.__name__}_{self.uuid}"
     
-    def to(self, device):
+    def to(self, device: str):
         """
         Moves the module and all its submodules to the specified device.
 
@@ -77,7 +77,7 @@ class BackboneModule(nn.Module):
                 val.to(device)
         return self
 
-    def __set_uuid(self,uuid):
+    def __set_uuid(self,uuid: str):
         """
         Set the UUID attribute for the object and update construction_args with the new UUID. Used when loading an already initialized module.
         Never call this method manually.
@@ -91,7 +91,7 @@ class BackboneModule(nn.Module):
         self.construction_args["current"]["uuid"] = uuid
     
     @staticmethod
-    def __get_class(module_construction_args):
+    def __get_class(module_construction_args: dict):
         """
         A static method to retrieve the subclass implementing the Backbone module.
         Never call this method manually.
@@ -126,7 +126,7 @@ class BackboneModule(nn.Module):
         return out
     
     @classmethod
-    def __load_module(cls, construction_args):
+    def __load_module(cls, construction_args: dict):
         """
         Recursivelly load this module and all its submodules.
         Never call this method manually.
@@ -147,7 +147,7 @@ class BackboneModule(nn.Module):
         module.on_load()
         return module
 
-    def on_save(self,path):
+    def on_save(self,path: str):
         """Called before the module gets serialized. Override this if you want to do something when the module is loaded
 
         Args:
@@ -160,7 +160,7 @@ class BackboneModule(nn.Module):
         """
         return
     
-    def save(self, path="./"):
+    def save(self, path: str ="./"):
         """
         Saves the module's structure to a text file, module's arguments to a JSON file (or pickle file if JSON fails), and the module's state dictionary to a .pth file.
 
@@ -185,7 +185,7 @@ class BackboneModule(nn.Module):
         return torch.save(self.state_dict(),os.path.join(path,"model.pth"))
     
     @classmethod
-    def load(cls, path, strict:bool = True):
+    def load(cls, path: str, strict:bool = True):
         """
         Load a module from the specified folder path.
 

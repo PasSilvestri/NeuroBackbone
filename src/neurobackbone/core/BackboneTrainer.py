@@ -24,7 +24,7 @@ import neurobackbone.utils as bkb_utils
 class BackboneTrainer():
     """Utility class to train and evaluate a model. Each Backbone Trainer instance is uniquly associated with a Backbone model."""
 
-    def __init__(self, model: BackboneModule, optimizer, loss_fn: BackboneFunction, evaluation_fns: List(BackboneFunction), main_metric_name: str = None,
+    def __init__(self, model: BackboneModule, optimizer, loss_fn: BackboneFunction, evaluation_fns: List[BackboneFunction], main_metric_name: str = None,
                  hooks: List[BackboneHook] = [], **kwargs):
         """
         Args:
@@ -185,10 +185,9 @@ class BackboneTrainer():
 
             # TODO: add lr scheduler support
 
-            print(f"Epoch: {epoch+1}/{epochs} | Training loss: {epoch_loss:.8f} | Validation loss: {valid_loss:.8f}\n", flush=True)
-            if len(self.evaluation_fns) > 1:
-                for score_name, score_value in valid_scores.items():
-                    print(f"\t| {score_name}: {score_value:.8f}\n", flush=True)
+            print(f"Epoch: {epoch+1}/{epochs} | Training loss: {epoch_loss:.8f} | Validation loss: {valid_loss:.8f}", flush=True)
+            for score_name, score_value in valid_scores.items():
+                print(f"\t| {score_name}: {score_value:.8f}", flush=True)
     
             if path != None and save_current_graphs:
                 bkb_utils.save_losses_graph(path, self.epoch_loss_evolution, self.valid_loss_evolution, filename="current_loss")
@@ -213,7 +212,7 @@ class BackboneTrainer():
             stage (str, optional): the stage of the evaluation. Defaults to "valid". Possible values are "valid" and "test".
         Returns:
             final_loss (float): the average loss over valid_dataset.
-            scores (list(float)): the list of scores computed over the dataset.
+            scores (dict(float)): a dictionary of scores computed over the dataset. The keys are the evaluation function names and the values are the scores.
         """
         loss_fn = self.loss_fn if self.loss_fn is not None else lambda y_hat,y: torch.zeros(1)
         total_loss = 0.0
@@ -251,9 +250,18 @@ class BackboneTrainer():
         return total_loss/len(dataloader), {score_name: score_value/len(dataloader) for score_name, score_value in valid_scores.items()}
     
     def test(self, test_dataset: torch.utils.data.Dataset, batch_size = 32, collate_fn=None):
+        """
+        Args:
+            test_dataset (Dataset): the dataset to use to test the model.
+            batch_size (int, optional): the size of a single batch. Defaults to 32.
+            collate_fn (function, optional): the dataloader collate function. Defaults to None.
+        Returns:
+            final_loss (float): the average loss over test_dataset.
+            scores (dict(float)): a dictionary of scores computed over the dataset. The keys are the evaluation function names and the values are the scores.
+        """
         return self.evaluate(test_dataset, batch_size=batch_size, collate_fn=collate_fn, stage="test")
     
-    def save_curent_model_state(self, path):
+    def save_curent_model_state(self, path: str):
         """
         Save the current model state and training evolution data to the specified path.
 
@@ -276,7 +284,7 @@ class BackboneTrainer():
         bkb_utils.save_losses_graph(path, self.epoch_loss_evolution, self.valid_loss_evolution, filename="best_model_loss")
         for score_name, score_evolution in self.valid_scores_evolution.items(): bkb_utils.save_score_graph(path,score_evolution,score_name,f"best_model_{score_name}")
     
-    def load_trainer_evolution(self,path):
+    def load_trainer_evolution(self,path: str):
         """
         Load the trainer evolution data from a JSON file located at the specified path.
 
