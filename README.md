@@ -6,7 +6,7 @@ NeuroBackbone is a lightweight, flexible Python framework based on Pytorch, for 
 ### Installation
 
 To install the package, download it from this repo and place it in your python libraries folder.
-TODO: add to pip
+Soon on pip
 
 ### Usage
 ```python
