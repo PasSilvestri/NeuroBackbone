@@ -186,8 +186,9 @@ class BackboneTrainer():
             # TODO: add lr scheduler support
 
             print(f"Epoch: {epoch+1}/{epochs} | Training loss: {epoch_loss:.8f} | Validation loss: {valid_loss:.8f}", flush=True)
+            spaces = len(f"Epoch: {epoch+1}/{epochs} ")
             for score_name, score_value in valid_scores.items():
-                print(f"\t| {score_name}: {score_value:.8f}", flush=True)
+                print(" "*spaces + f"| {score_name}: {score_value:.8f}", flush=True)
     
             if path != None and save_current_graphs:
                 bkb_utils.save_losses_graph(path, self.epoch_loss_evolution, self.valid_loss_evolution, filename="current_loss")
