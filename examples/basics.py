@@ -49,8 +49,8 @@ model.to("cuda")
 
 optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 loss_fn = bkb.functions.BackboneFunction("Cross-entropy",torch.nn.functional.cross_entropy)
-score_fn = bkb.functions.BackboneFunction(name = "Accuracy", additional_params = {"accuracy_fn":torchmetrics.Accuracy(task="binary", num_classes=num_classes).to(model.device)},
-                                          function = lambda preds, targets, accuracy_fn: accuracy_fn(preds, torch.stack((1-targets, targets), dim=-1).int()))
+score_fn = bkb.functions.BackboneFunction(name = "Accuracy", function = lambda preds, targets, accuracy_fn: accuracy_fn(preds, torch.stack((1-targets, targets), dim=-1).int()),
+                                          accuracy_fn = torchmetrics.Accuracy(task="binary", num_classes=num_classes).to(model.device))
 
 data_preprocessing_hook = bkb.hooks.PreprocessSamplesHook(hook = lambda samples, targets, stage: (samples, targets.type(torch.int64)))
 

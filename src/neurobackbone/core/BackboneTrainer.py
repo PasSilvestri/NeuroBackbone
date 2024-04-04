@@ -225,6 +225,8 @@ class BackboneTrainer():
                       desc=f"Evaluating",
                       bar_format="{desc}: |{bar}|{percentage:3.0f}% [{elapsed} ({remaining}), {rate_fmt}{postfix}]") as dataloader_bar:
                 for batch_idx, dataset_items in enumerate(dataloader_bar):
+                    if self.stop_flag: break # If the stop flag is set, we stop the training
+                    
                     if (type(dataset_items) is list or type(dataset_items) is tuple) and len(dataset_items) == 2:  
                         samples, targets = dataset_items
                     else:
@@ -303,3 +305,18 @@ class BackboneTrainer():
         Stop the training process. The trainer checks if the training should be stopped at the begging and at the end of each epoch, at the beginning each batch and right after computing the epoch loss (the epoch loss hooks get called).
         """
         self.stop_flag = True
+    
+    def __graceful_exit(self, save_path: str = None):
+        """
+        Gracefully exits the training.
+
+        Args:
+            save_path (str, optional): The path to save the program state. Defaults to None.
+        """
+        self.stop_training()
+        if save_path != None:
+            self.save_curent_model_state(save_path)
+            bkb_utils.save_losses_graph(save_path, self.epoch_loss_evolution, self.valid_loss_evolution, filename="final_loss")
+            for score_name, score_evolution in self.valid_scores_evolution.items(): bkb_utils.save_score_graph(save_path,score_evolution,score_name,f"final_{score_name}")
+        print(f"Best score so far ({self.main_metric}): {self.best_scores[self.main_metric]:.4f}")
+            
